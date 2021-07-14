@@ -25,24 +25,37 @@ use termion::input::TermRead;
 
 pub struct Qb {
     con: Connection, 
-    tabs: TabsState,
+    // tabs: TabsState,
     dbs: HashMap<String, DbTable>,
+
 }
 
 impl Qb {
-    pub fn new(con: Connection, tabs: TabsState) -> Qb {
-        Qb {
+    pub fn new(con: Connection) -> Result<Qb> {
+        // let tbs = get_names(&con);
+        Ok( Qb {
             con,
-            tabs,
+            // tabs,
             dbs: HashMap::new(),
-        }
+        })
     }
     pub fn open(&mut self, db: String) {
-        if (!self.dbs.contains_key(db)) {
+        // if (!self.dbs.contains_key(db)) {
             // open and read the db if it's not in memory
-        }
-        self.tabs.
+        // }
+        // self.tabs.title_index();
     }
+    fn get_names(conn: &Connection) -> Result<Vec<String>> {
+        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+
+        let mut tbls = Vec::new();
+        for tbl in rows {
+            tbls.push(tbl?);
+        }
+
+        Ok(tbls)
+    }   
 }
 
 pub struct DbTable {
@@ -152,10 +165,10 @@ impl TabsState {
         self.index = i;
     }
 
-    pub fn set_title(&mut self, title: String) {
-        let i = self.title_index(title);
-        self.index = i;
-    }
+    // pub fn set_title(&mut self, title: String) {
+    //     let i = self.title_index(title);
+    //     self.index = i;
+    // }
     // maybe use a easier datatype to solve this
     // Should return an option
     pub fn title_index(self, title: String) -> usize {
