@@ -12,53 +12,87 @@ use tui::{
     Terminal,
 };
 use termion::{raw::IntoRawMode, screen::AlternateScreen};
-use std::collections::HashMap;
-
-// use crate::util::event::{Event, Events};
-// use std::sync::mpsc;
 
 extern crate termion;
 use termion::event::Key;
 use termion::input::TermRead;
 
-// use rusqlite::NO_PARAMS;
-
-pub struct Qb {
-    con: Connection, 
-    // tabs: TabsState,
-    dbs: HashMap<String, DbTable>,
-
+pub struct Qb<'a> {
+    conn: &'a Connection,
+    tabs: TabsState,
+    dbs: Vec<Option<DbTable>>,
 }
 
-impl Qb {
-    pub fn new(con: Connection) -> Result<Qb> {
-        // let tbs = get_names(&con);
-        Ok( Qb {
-            con,
-            // tabs,
-            dbs: HashMap::new(),
-        })
+impl Qb <'_> {
+    pub fn new(conn: &Connection) -> Qb {
+        Qb {
+            conn,
+            tabs: TabsState::new(Vec::new()),
+            dbs: Vec::new(),
+        }
     }
-    pub fn open(&mut self, db: String) {
-        // if (!self.dbs.contains_key(db)) {
-            // open and read the db if it's not in memory
+    pub fn open(&mut self, db: String, index: usize) -> Result<()> {
+            let ent = get_entries(&self.conn, db.clone());
+            let (scheme, ents) = ent?;
+            self.dbs[index] = Some(DbTable::new(db, scheme, ents));
         // }
-        // self.tabs.title_index();
+        Ok(())
     }
-    fn get_names(conn: &Connection) -> Result<Vec<String>> {
-        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")?;
+    pub fn open_current(&mut self) -> Result<()> {
+        self.open(self.tabs.get_tab(), self.tabs.index)
+    }
+
+    pub fn selected(&self) -> &DbTable {
+        &self.dbs[self.tabs.index].as_ref().unwrap()
+    }
+
+    pub fn mutselected(&mut self) -> &mut DbTable {
+        self.dbs[self.tabs.index].as_mut().unwrap()
+    }
+
+    fn get_names(&mut self) -> Result<()> {
+        let mut stmt = self.conn.prepare("SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")?;
         let rows = stmt.query_map([], |row| row.get(0))?;
 
         let mut tbls = Vec::new();
         for tbl in rows {
-            tbls.push(tbl?);
+            let t: String = tbl?;
+            tbls.push(t.clone());
+            // self.dbs.insert(t, None);
         }
-
-        Ok(tbls)
+        let size = tbls.len();
+        self.tabs = TabsState::new(tbls);
+        self.dbs = vec![None; size];
+        Ok(())
     }   
 }
 
+fn get_entries(conn: &Connection, name: String) -> Result<(Vec<String>,Vec<Vec<Value>>)> {
+    let sql = format!("SELECT * FROM {}", name);
+    let mut stmt = conn.prepare(&sql)?;
+    let value = stmt.column_names();
+    let scheme: Vec<String> = value.iter().map(|s| s.to_string()).collect();
+    let rows = stmt.query_map([], |row| {
+        let mut cols = Vec::new();
+        let ncols = row.column_count();
+        for i in 0..ncols {
+            cols.push(row.get(i)?)
+        }
+        Ok(cols)
+    })?;
+
+    let mut entries = Vec::new();
+    for entry in rows {
+        entries.push(entry?);
+    }
+
+    Ok((scheme, entries))
+}
+
+#[derive(Clone)]
 pub struct DbTable {
+    name: String,
+    scheme: Vec<String>,
     state: TableState,
     items: Vec<Vec<Value>>,
     hstate: usize,
@@ -68,13 +102,15 @@ pub struct DbTable {
 
 
 impl DbTable {
-    fn new(db: Vec<Vec<Value>>) -> Self {
+    fn new(name: String, scheme: Vec<String>, db: Vec<Vec<Value>>) -> Self {
         let hlen = if db.len() < 1 {
             0
         } else {
             db[0].len()
         };
         DbTable {
+            name,
+            scheme,
             state: TableState::default(),
             items: db,
             hstate: 0,
@@ -122,16 +158,6 @@ impl DbTable {
             self.hstate -= 1; 
         }
     }
-
-    // pub fn scroll(&mut self) -> usize {
-    //     let i = self.state.selected().unwrap_or_else(||0);
-    //         if i < 83 {
-    //             0
-    //         } else {
-    //             i - 83
-    //         }
-    // }
-            // let scrolls = table.state.selected().unwrap_or_else(||0);
 }
 
 pub struct TabsState {
@@ -147,7 +173,7 @@ impl TabsState {
         }
     }
 
-    pub fn get_tab(self) -> String {
+    pub fn get_tab(&self) -> String {
         self.titles[self.index].clone()
     }
     pub fn next(&mut self) {
@@ -165,12 +191,6 @@ impl TabsState {
         self.index = i;
     }
 
-    // pub fn set_title(&mut self, title: String) {
-    //     let i = self.title_index(title);
-    //     self.index = i;
-    // }
-    // maybe use a easier datatype to solve this
-    // Should return an option
     pub fn title_index(self, title: String) -> usize {
         let mut i = 0;
         for t in self.titles.iter() {
@@ -183,77 +203,6 @@ impl TabsState {
     }
 }
 
-fn get_names(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")?;
-    let rows = stmt.query_map([], |row| row.get(0))?;
-
-    let mut tbls = Vec::new();
-    for tbl in rows {
-        tbls.push(tbl?);
-    }
-
-    Ok(tbls)
-}
-
-// fn get__scheme(conn: &Connection, name: String) -> Result<Vec<String>> {
-//     let sql = format!("SELECT sql FROM sqlite_master WHERE name = '{}';", name);
-//     let mut stmt = conn.prepare(&sql)?;
-//     let rows = stmt.query_map([], |row| row.get(0))?;
-
-//     let mut tbls = Vec::new();
-//     for tbl in rows {
-//         tbls.push(tbl?);
-//     }
-
-//     Ok(tbls)
-// }
-
-fn get_scheme(conn: &Connection, name: String) -> Result<Vec<String>> {
-    let sql = format!("SELECT * FROM {}", name);
-    let stmt = conn.prepare(&sql)?;
-    let value = stmt.column_names();
-    Ok(value.iter().map(|s| s.to_string()).collect())
-}
-
-// maybe it should do some lazy loading but I think limit shouldn't be visable
-fn get_entries(conn: &Connection, name: String) -> Result<Vec<Vec<Value>>> {
-    let sql = format!("SELECT * FROM {}", name);
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| {
-        let mut cols = Vec::new();
-        let ncols = row.column_count();
-        for i in 0..ncols {
-            cols.push(row.get(i)?)
-        }
-        Ok(cols)
-    })?;
-    // stmt.column_count
-
-    let mut entries = Vec::new();
-    for entry in rows {
-        entries.push(entry?);
-    }
-
-    Ok(entries)
-}
-
-// fn parse_sql(sql: String) { // -> Result<Vec<Statement>, ParserError> {
-//     let dialect = GenericDialect {};
-//     let asts = Parser::parse_sql(&dialect, &sql).unwrap();
-//     // println!("{:?}", asts);
-//     for ast in asts {
-//         match ast {
-//             Statement::CreateTable {name, columns, ..} => { 
-//                 println!("table: {}", name);
-//                 for column in columns {
-//                     println!("column: {} {}", column.name, column.data_type);
-//                 }
-//             },
-//             _ => println!("no match"),
-//         }
-//     }
-// }
-
 fn show(v: &Value) -> String {
     match v {
         Value::Null => "Null".to_string(),
@@ -265,7 +214,6 @@ fn show(v: &Value) -> String {
 }
 
 fn main() -> Result<()> {
-    // real arg parsing in the future
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
@@ -273,6 +221,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Should seperate the draw functions
     let stdout = io::stdout().into_raw_mode().expect("Can't do raw mode");
     let stdout = AlternateScreen::from(stdout);
     let backend = TermionBackend::new(stdout);
@@ -281,16 +230,10 @@ fn main() -> Result<()> {
 
     let path = &args[1];
     let conn = Connection::open(path)?;
-    let tbls = get_names(&conn)?;
-
-    let mut tabs = TabsState::new(tbls.clone());
-    let entries = get_entries(&conn, tbls[0].clone())?;
-    let headers = get_scheme(&conn, tbls[0].clone())?;
-    // let entries = get_entries(&conn, "moz_cookies".to_string())?;
-    // let headers = get_scheme(&conn, "moz_cookies".to_string())?;
-
-    let mut table = DbTable::new(entries.clone());
-
+    let mut qb = Qb::new(&conn);
+    qb.get_names()?;
+    qb.open_current()?;
+    
     'lp: loop {
         terminal.draw(|f| {
             let rect = Layout::default()
@@ -299,13 +242,13 @@ fn main() -> Result<()> {
                 .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
                 .split(f.size());
             let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-            let headers_cells = headers
+            let headers_cells = qb.selected().scheme
                 .iter()
-                .skip(table.hstate)
+                .skip(qb.selected().hstate)
                 .map(|h| Cell::from(h.clone()).style(Style::default().add_modifier(Modifier::REVERSED)));
             let header_rows = Row::new(headers_cells)
                 .height(1);
-            let dbs = tabs
+            let dbs = qb.tabs
                 .titles
                 .iter()
                 .map(|t| {
@@ -317,11 +260,11 @@ fn main() -> Result<()> {
                 }).collect();
             let ttabs = Tabs::new(dbs)
                 .block(Block::default().borders(Borders::ALL))
-                .select(tabs.index)
+                .select(qb.tabs.index)
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
                 ;
             f.render_widget(ttabs, rect[0]);
-            let rows = table.items.iter().map(|item| {
+            let rows = qb.selected().items.iter().map(|item| {
                 let height = item
                     .iter()
                     // .take(4)
@@ -329,12 +272,11 @@ fn main() -> Result<()> {
                     .max()
                     .unwrap_or(0)
                     + 1;
-                let cells = item.iter().skip(table.hstate).map(|c| Cell::from(show(c)));
+                let cells = item.iter().skip(qb.selected().hstate).map(|c| Cell::from(show(c)));
                 Row::new(cells).height(height as u16)
             });
             let mut cons = Vec::new();
-            // for _ in rows.clone() {
-            for _ in 0..table.hwidth {
+            for _ in 0..qb.selected().hwidth {
                 cons.push(Constraint::Percentage(20));
             }
 
@@ -342,10 +284,9 @@ fn main() -> Result<()> {
                 // .block(Block::default())
                 .header(header_rows)
                 .highlight_style(selected_style)
-                // .highlight_symbol(">>")
                 // We need to loop over rows etc depending on f.size and min(row.length, maxlength)
                 .widths(&cons[..]);
-           f.render_stateful_widget(t, rect[1], &mut table.state);
+           f.render_stateful_widget(t, rect[1], &mut qb.mutselected().state);
         }).expect("render error");
         let stdin = io::stdin();
         for c in stdin.keys() {
@@ -355,20 +296,29 @@ fn main() -> Result<()> {
                         break 'lp;
                 }
                 Key::Down | Key::Char('j') => {
-                    table.next();
+                    qb.mutselected().next();
                     break;
-                    // println!("{:?}", table.state.selected());
                 }
                 Key::Up | Key::Char('k') => {
-                    table.prev();
+                    qb.mutselected().prev();
                     break;
                 }
                 Key::Left | Key::Char('h') => {
-                    table.hprev();
+                    qb.mutselected().hprev();
                     break;
                 }
                 Key::Right | Key::Char('l') => {
-                    table.hnext();
+                    qb.mutselected().hnext();
+                    break;
+                }
+                Key::Char('n') => {
+                    qb.tabs.next();
+                    qb.open_current()?;
+                    break;
+                }
+                Key::Char('p') => {
+                    qb.tabs.prev();
+                    qb.open_current()?;
                     break;
                 }
                 _ => {}
