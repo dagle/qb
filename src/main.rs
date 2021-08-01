@@ -220,7 +220,12 @@ fn main() -> Result<()> {
         println!("syntax: qb file");
         return Ok(());
     }
-
+    let path = &args[1];
+    let conn = Connection::open(path)?;
+    let mut qb = Qb::new(&conn);
+    qb.get_names()?;
+    qb.open_current()?;
+ 
     // Should seperate the draw functions
     let stdout = io::stdout().into_raw_mode().expect("Can't do raw mode");
     let stdout = AlternateScreen::from(stdout);
@@ -228,12 +233,7 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend).expect("Backend failed");
     terminal.clear().expect("Clear error");
 
-    let path = &args[1];
-    let conn = Connection::open(path)?;
-    let mut qb = Qb::new(&conn);
-    qb.get_names()?;
-    qb.open_current()?;
-    
+   
     'lp: loop {
         terminal.draw(|f| {
             let rect = Layout::default()
