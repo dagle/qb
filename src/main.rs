@@ -148,7 +148,7 @@ impl DbTable {
 
     // maybe these 2 should wrap
     pub fn hnext(&mut self) {
-        if self.hstate < self.hlen - self.hwidth {
+        if self.hlen > self.hwidth && self.hstate < self.hlen - self.hwidth {
             self.hstate += 1; 
         }
     }
