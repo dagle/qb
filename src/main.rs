@@ -1,16 +1,19 @@
 use rusqlite::{Connection, Result};
-use std::env;
 use rusqlite::types::Value;
+use clap::Parser;
+use std::path::PathBuf;
 
 use std::io;
+
+mod ui;
+
 use tui::{
     layout::{Constraint, Layout, Direction},
     backend::TermionBackend,
-    style::{Color, Modifier, Style},
-    text::{Span, Spans},
-    widgets::{Table, TableState, Row, Cell, Borders, Block, Tabs},
-    Terminal,
+    widgets::TableState, 
+    Terminal
 };
+
 use termion::{raw::IntoRawMode, screen::AlternateScreen};
 
 extern crate termion;
@@ -32,7 +35,7 @@ impl Qb <'_> {
         }
     }
     pub fn open(&mut self, db: String, index: usize) -> Result<()> {
-            let ent = get_entries(&self.conn, db.clone());
+            let ent = get_entries(self.conn, db.clone());
             let (scheme, ents) = ent?;
             self.dbs[index] = Some(DbTable::new(db, scheme, ents));
         // }
@@ -43,7 +46,7 @@ impl Qb <'_> {
     }
 
     pub fn selected(&self) -> &DbTable {
-        &self.dbs[self.tabs.index].as_ref().unwrap()
+        self.dbs[self.tabs.index].as_ref().unwrap()
     }
 
     pub fn mutselected(&mut self) -> &mut DbTable {
@@ -98,12 +101,13 @@ pub struct DbTable {
     hstate: usize,
     hlen: usize,
     hwidth: usize,
+    zoom: Option<Vec<Value>>, // should be a ref
 }
 
 
 impl DbTable {
     fn new(name: String, scheme: Vec<String>, db: Vec<Vec<Value>>) -> Self {
-        let hlen = if db.len() < 1 {
+        let hlen = if db.is_empty() {
             0
         } else {
             db[0].len()
@@ -116,6 +120,7 @@ impl DbTable {
             hstate: 0,
             hlen,
             hwidth: 5,
+            zoom: None,
         }
     }
     pub fn next(&mut self) {
@@ -144,6 +149,20 @@ impl DbTable {
             None => 0,
         };
         self.state.select(Some(i));
+    }
+    pub fn set(&mut self, i: usize) {
+        self.state.select(Some(i));
+    }
+
+    pub fn first(&mut self) {
+        self.set(0);
+    }
+
+    pub fn grep(&mut self, ) {
+    }
+    
+    pub fn last(&mut self) {
+        self.set(self.items.len() - 1);
     }
 
     // maybe these 2 should wrap
@@ -199,28 +218,21 @@ impl TabsState {
             }
             i += 1;
         }
-        return i;
+        i
     }
 }
 
-fn show(v: &Value) -> String {
-    match v {
-        Value::Null => "Null".to_string(),
-        Value::Integer(i) => i.to_string(),
-        Value::Real(f) => f.to_string(),
-        Value::Text(t) => t.to_string(),
-        Value::Blob(_b) => "Blob".to_string(),
-    }
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Cli {
+    #[clap(value_name = "File.sqlite")]
+    db_path: PathBuf,
 }
 
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let args = Cli::parse();
 
-    if args.len() != 2 {
-        println!("syntax: qb file");
-        return Ok(());
-    }
-    let path = &args[1];
+    let path = &args.db_path;
     let conn = Connection::open(path)?;
     let mut qb = Qb::new(&conn);
     qb.get_names()?;
@@ -241,85 +253,64 @@ fn main() -> Result<()> {
                 // maybe just a line?
                 .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
                 .split(f.size());
-            let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-            let headers_cells = qb.selected().scheme
-                .iter()
-                .skip(qb.selected().hstate)
-                .map(|h| Cell::from(h.clone()).style(Style::default().add_modifier(Modifier::REVERSED)));
-            let header_rows = Row::new(headers_cells)
-                .height(1);
-            let dbs = qb.tabs
-                .titles
-                .iter()
-                .map(|t| {
-                    let (first, rest) = t.split_at(1);
-                    Spans::from(vec![
-                        Span::styled(first, Style::default().fg(Color::Yellow)),
-                        Span::styled(rest, Style::default()),
-                    ])
-                }).collect();
-            let ttabs = Tabs::new(dbs)
-                .block(Block::default().borders(Borders::ALL))
-                .select(qb.tabs.index)
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-                ;
-            f.render_widget(ttabs, rect[0]);
-            let rows = qb.selected().items.iter().map(|item| {
-                let height = item
-                    .iter()
-                    // .take(4)
-                    .map(|content| show(content).chars().filter(|c| *c == '\n').count())
-                    .max()
-                    .unwrap_or(0)
-                    + 1;
-                let cells = item.iter().skip(qb.selected().hstate).map(|c| Cell::from(show(c)));
-                Row::new(cells).height(height as u16)
-            });
-            let mut cons = Vec::new();
-            for _ in 0..qb.selected().hwidth {
-                cons.push(Constraint::Percentage(20));
-            }
-
-            let t = Table::new(rows)
-                // .block(Block::default())
-                .header(header_rows)
-                .highlight_style(selected_style)
-                // We need to loop over rows etc depending on f.size and min(row.length, maxlength)
-                .widths(&cons[..]);
-           f.render_stateful_widget(t, rect[1], &mut qb.mutselected().state);
+            ui::make_tabs(&qb, f, rect[0]);
+            ui::make_rows(&mut qb, f, rect[1]);
+            ui::make_popup(&qb, f)
         }).expect("render error");
         let stdin = io::stdin();
-        for c in stdin.keys() {
+        if let Some(c) = stdin.keys().next() {
             let ch = c.unwrap();
             match ch {
                 Key::Char('q') => {
-                        break 'lp;
+                    break 'lp;
                 }
                 Key::Down | Key::Char('j') => {
                     qb.mutselected().next();
-                    break;
                 }
                 Key::Up | Key::Char('k') => {
                     qb.mutselected().prev();
-                    break;
                 }
                 Key::Left | Key::Char('h') => {
                     qb.mutselected().hprev();
-                    break;
                 }
                 Key::Right | Key::Char('l') => {
                     qb.mutselected().hnext();
-                    break;
+                }
+                Key::Home | Key::Char('g') => {
+                    qb.mutselected().first();
+                }
+                Key::End | Key::Char('G') => {
+                    qb.mutselected().last();
+                }
+                Key::Char('s') => {
+                    // get string
+                    // qb.mutselected().search(string)
+                }
+                Key::Char('\n') => {
+                    let selected = qb.mutselected();
+                    let zoom = &selected.zoom;
+                    match zoom {
+                        None => {
+                            if let Some(i) = selected.state.selected() {
+                                selected.zoom = Some(selected.items[i].clone());
+                            }
+                        }
+                        _ => {
+                            selected.zoom = None;
+                        }
+                    }
+                }
+                Key::Char('/') => {
+                    // get string
+                    // qb.mutselected().grep(string)
                 }
                 Key::Char('n') => {
                     qb.tabs.next();
                     qb.open_current()?;
-                    break;
                 }
                 Key::Char('p') => {
                     qb.tabs.prev();
                     qb.open_current()?;
-                    break;
                 }
                 _ => {}
             }

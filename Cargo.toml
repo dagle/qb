@@ -13,3 +13,4 @@ debug = 1
 rusqlite = "*"
 tui = "0.15"
 termion = "1.5"
+clap = { version = "3.0", features = ["derive"] }
