@@ -2,10 +2,15 @@ use rusqlite::{Connection, Result};
 use rusqlite::types::Value;
 use clap::Parser;
 use std::path::PathBuf;
+use tui::style::{Color, Modifier, Style};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
 
 use std::io;
 
 mod ui;
+mod config;
+
+use config::*;
 
 use tui::{
     layout::{Constraint, Layout, Direction},
@@ -225,12 +230,14 @@ impl TabsState {
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
-    #[clap(value_name = "File.sqlite")]
     db_path: PathBuf,
 }
 
 fn main() -> Result<()> {
     let args = Cli::parse();
+    let cfg: Config = confy::load("qb", None)
+        .expect("Couldn't load config file, remove it to get a new one");
+    confy::store("qb", None, &cfg).expect("Couldn't update config");
 
     let path = &args.db_path;
     let conn = Connection::open(path)?;
@@ -244,7 +251,6 @@ fn main() -> Result<()> {
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend).expect("Backend failed");
     terminal.clear().expect("Clear error");
-
    
     'lp: loop {
         terminal.draw(|f| {
@@ -260,60 +266,99 @@ fn main() -> Result<()> {
         let stdin = io::stdin();
         if let Some(c) = stdin.keys().next() {
             let ch = c.unwrap();
-            match ch {
-                Key::Char('q') => {
-                    break 'lp;
-                }
-                Key::Down | Key::Char('j') => {
-                    qb.mutselected().next();
-                }
-                Key::Up | Key::Char('k') => {
-                    qb.mutselected().prev();
-                }
-                Key::Left | Key::Char('h') => {
-                    qb.mutselected().hprev();
-                }
-                Key::Right | Key::Char('l') => {
-                    qb.mutselected().hnext();
-                }
-                Key::Home | Key::Char('g') => {
-                    qb.mutselected().first();
-                }
-                Key::End | Key::Char('G') => {
-                    qb.mutselected().last();
-                }
-                Key::Char('s') => {
-                    // get string
-                    // qb.mutselected().search(string)
-                }
-                Key::Char('\n') => {
-                    let selected = qb.mutselected();
-                    let zoom = &selected.zoom;
-                    match zoom {
-                        None => {
-                            if let Some(i) = selected.state.selected() {
-                                selected.zoom = Some(selected.items[i].clone());
-                            }
+            if ch == Key::Char('q') {
+                break 'lp;
+            }
+            for bind in &cfg.keybinds {
+                if bind.key == ch {
+                    match bind.action {
+                        Action::Next => {
+                            qb.mutselected().next();
                         }
-                        _ => {
-                            selected.zoom = None;
+                        Action::Prev => {
+                            qb.mutselected().prev();
+                        }
+                        Action::Hnext => {
+                            qb.mutselected().hnext();
+                        }
+                        Action::Hprev => {
+                            qb.mutselected().hprev();
+                        }
+                        Action::First => {
+                            qb.mutselected().first();
+                        }
+                        Action::Last => {
+                            qb.mutselected().last();
+                        }
+                        Action::Zoom => {
+                        }
+                        Action::Quit => {
+                            break 'lp;
+                        }
+                        Action::Search => {
                         }
                     }
                 }
-                Key::Char('/') => {
-                    // get string
-                    // qb.mutselected().grep(string)
-                }
-                Key::Char('n') => {
-                    qb.tabs.next();
-                    qb.open_current()?;
-                }
-                Key::Char('p') => {
-                    qb.tabs.prev();
-                    qb.open_current()?;
-                }
-                _ => {}
             }
+            // for bind in keys.iter() {
+            //     if ch == bind.key {
+            //         (bind.fun)(&mut qb)
+            //     }
+            // }
+            // match ch {
+            //     Key::Char('q') => {
+            //         break 'lp;
+            //     }
+            //     Key::Down | Key::Char('j') => {
+            //         qb.mutselected().next();
+            //     }
+            //     Key::Up | Key::Char('k') => {
+            //         qb.mutselected().prev();
+            //     }
+            //     Key::Left | Key::Char('h') => {
+            //         qb.mutselected().hprev();
+            //     }
+            //     Key::Right | Key::Char('l') => {
+            //         qb.mutselected().hnext();
+            //     }
+            //     Key::Home | Key::Char('g') => {
+            //         qb.mutselected().first();
+            //     }
+            //     Key::End | Key::Char('G') => {
+            //         qb.mutselected().last();
+            //     }
+            //     Key::Char('s') => {
+            //         // get string
+            //         // qb.mutselected().search(string)
+            //     }
+            //     Key::Char('\n') => {
+            //         let selected = qb.mutselected();
+            //         let zoom = &selected.zoom;
+            //         match zoom {
+            //             None => {
+            //                 if let Some(i) = selected.state.selected() {
+            //                     selected.zoom = Some(selected.items[i].clone());
+            //                 }
+            //             }
+            //             _ => {
+            //                 selected.zoom = None;
+            //             }
+            //         }
+            //     }
+            //     Key::Char('/') => {
+            //         // get string
+            //         // qb.mutselected().grep(string)
+            //     }
+            //     Key::Char('n') => {
+            //         qb.tabs.next();
+            //         qb.open_current()?;
+            //     }
+            //     Key::Char('p') => {
+            //         qb.tabs.prev();
+            //         qb.open_current()?;
+            //     }
+            //     _ => {}
+            // }
         }
     }
     Ok(())
