@@ -23,8 +23,23 @@ enum ColorDef{
     LightMagenta,
     LightCyan,
     White,
+    #[serde(serialize_with = "ColorDef::ser_rgb")]
     Rgb(u8, u8, u8),
     Indexed(u8),
+}
+
+impl ColorDef {
+    fn ser_rgb<T,S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer {
+            match self {
+                ColorDef::Rgb(r, g, b) => {
+                    let str = format!("#{}{}{}", r, g, b);
+                    serializer.serialize_str(&str)
+                }
+                _ => 
+            }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
