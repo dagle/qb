@@ -300,65 +300,6 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            // for bind in keys.iter() {
-            //     if ch == bind.key {
-            //         (bind.fun)(&mut qb)
-            //     }
-            // }
-            // match ch {
-            //     Key::Char('q') => {
-            //         break 'lp;
-            //     }
-            //     Key::Down | Key::Char('j') => {
-            //         qb.mutselected().next();
-            //     }
-            //     Key::Up | Key::Char('k') => {
-            //         qb.mutselected().prev();
-            //     }
-            //     Key::Left | Key::Char('h') => {
-            //         qb.mutselected().hprev();
-            //     }
-            //     Key::Right | Key::Char('l') => {
-            //         qb.mutselected().hnext();
-            //     }
-            //     Key::Home | Key::Char('g') => {
-            //         qb.mutselected().first();
-            //     }
-            //     Key::End | Key::Char('G') => {
-            //         qb.mutselected().last();
-            //     }
-            //     Key::Char('s') => {
-            //         // get string
-            //         // qb.mutselected().search(string)
-            //     }
-            //     Key::Char('\n') => {
-            //         let selected = qb.mutselected();
-            //         let zoom = &selected.zoom;
-            //         match zoom {
-            //             None => {
-            //                 if let Some(i) = selected.state.selected() {
-            //                     selected.zoom = Some(selected.items[i].clone());
-            //                 }
-            //             }
-            //             _ => {
-            //                 selected.zoom = None;
-            //             }
-            //         }
-            //     }
-            //     Key::Char('/') => {
-            //         // get string
-            //         // qb.mutselected().grep(string)
-            //     }
-            //     Key::Char('n') => {
-            //         qb.tabs.next();
-            //         qb.open_current()?;
-            //     }
-            //     Key::Char('p') => {
-            //         qb.tabs.prev();
-            //         qb.open_current()?;
-            //     }
-            //     _ => {}
-            // }
         }
     }
     Ok(())
