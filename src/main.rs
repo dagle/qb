@@ -40,14 +40,16 @@ impl Qb <'_> {
         }
     }
     pub fn open(&mut self, db: String, index: usize) -> Result<()> {
-            let ent = get_entries(self.conn, db.clone());
-            let (scheme, ents) = ent?;
-            self.dbs[index] = Some(DbTable::new(db, scheme, ents));
-        // }
+        let ent = get_entries(self.conn, db.clone());
+        let (scheme, ents) = ent?;
+        self.dbs[index] = Some(DbTable::new(db, scheme, ents));
         Ok(())
     }
     pub fn open_current(&mut self) -> Result<()> {
-        self.open(self.tabs.get_tab(), self.tabs.index)
+        if let None = self.dbs[self.tabs.index] {
+            return self.open(self.tabs.get_tab(), self.tabs.index)
+        }
+        Ok(())
     }
 
     pub fn selected(&self) -> &DbTable {
@@ -80,9 +82,9 @@ fn get_entries(conn: &Connection, name: String) -> Result<(Vec<String>,Vec<Vec<V
     let mut stmt = conn.prepare(&sql)?;
     let value = stmt.column_names();
     let scheme: Vec<String> = value.iter().map(|s| s.to_string()).collect();
+    let ncols = stmt.column_count();
     let rows = stmt.query_map([], |row| {
         let mut cols = Vec::new();
-        let ncols = row.column_count();
         for i in 0..ncols {
             cols.push(row.get(i)?)
         }
@@ -243,7 +245,6 @@ fn main() -> Result<()> {
     let conn = Connection::open(path)?;
     let mut qb = Qb::new(&conn);
     qb.get_names()?;
-    qb.open_current()?;
  
     // Should seperate the draw functions
     let stdout = io::stdout().into_raw_mode().expect("Can't do raw mode");
@@ -253,6 +254,7 @@ fn main() -> Result<()> {
     terminal.clear().expect("Clear error");
    
     'lp: loop {
+        qb.open_current()?;
         terminal.draw(|f| {
             let rect = Layout::default()
                 .direction(Direction::Vertical)
@@ -261,7 +263,7 @@ fn main() -> Result<()> {
                 .split(f.size());
             ui::make_tabs(&qb, f, rect[0]);
             ui::make_rows(&mut qb, f, rect[1]);
-            ui::make_popup(&qb, f)
+            // ui::make_popup(&qb, f)
         }).expect("render error");
         let stdin = io::stdin();
         if let Some(c) = stdin.keys().next() {
@@ -289,6 +291,12 @@ fn main() -> Result<()> {
                         }
                         Action::Last => {
                             qb.mutselected().last();
+                        }
+                        Action::Tnext => {
+                            qb.tabs.next();
+                        }
+                        Action::Tprev => {
+                            qb.tabs.prev();
                         }
                         Action::Zoom => {
                         }

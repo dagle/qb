@@ -1,6 +1,6 @@
 use crate::Qb;
 use tui::style::{Color};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor, ser::SerializeTuple};
 use termion::event::Key;
 
 #[derive(Serialize, Deserialize)]
@@ -29,16 +29,14 @@ enum ColorDef{
 }
 
 impl ColorDef {
-    fn ser_rgb<T,S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn ser_rgb<S>(r: &u8, g: &u8, b: &u8, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer {
-            match self {
-                ColorDef::Rgb(r, g, b) => {
-                    let str = format!("#{}{}{}", r, g, b);
-                    serializer.serialize_str(&str)
-                }
-                _ => 
-            }
+            let mut tup = s.serialize_tuple(3)?;
+            tup.serialize_element(r)?;
+            tup.serialize_element(g)?;
+            tup.serialize_element(b)?;
+            tup.end()
     }
 }
 
@@ -72,6 +70,8 @@ pub enum Action {
     Prev,
     Hnext,
     Hprev,
+    Tnext,
+    Tprev,
     First,
     Last,
     Zoom,
@@ -136,10 +136,22 @@ impl Default for Config {
                 KeyBind {key:Key::Home, action: Action::First},
                 KeyBind {key:Key::Char('g'), action: Action::First},
                 KeyBind {key:Key::End, action: Action::Last},
+                KeyBind {key:Key::Ctrl('n'), action: Action::Tnext},
+                KeyBind {key:Key::Ctrl('p'), action: Action::Tprev},
                 KeyBind {key:Key::Char('G'), action: Action::Last},
                 KeyBind {key:Key::Char('q'), action: Action::Quit},
             ],
             colors: Colors::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn test_serialize() {
+        let conf = Config::default();
     }
 }
