@@ -1,207 +1,93 @@
-use rusqlite::{Connection, Result};
+use rusqlite::Connection;
 use rusqlite::types::Value;
 use clap::Parser;
-use std::path::PathBuf;
-use tui::style::{Color, Modifier, Style};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
+use std::{path::PathBuf, time::Duration, io::Stdout, convert::TryInto};
+use anyhow::{Context, Result};
+
+use tui_input::backend::crossterm::EventHandler;
+// use tui_input::Input;
 
 use std::io;
 
 mod ui;
+mod uis;
 mod config;
+
+use uis::{rows::DbTable, input::InputType};
+use uis::input::Input;
 
 use config::*;
 
-use tui::{
+use ratatui::{
     layout::{Constraint, Layout, Direction},
-    backend::TermionBackend,
-    widgets::TableState, 
-    Terminal
+    backend::CrosstermBackend,
+    Terminal, prelude::Backend
 };
 
-use termion::{raw::IntoRawMode, screen::AlternateScreen};
+use crossterm::{event::{self, Event, KeyCode}, terminal::{enable_raw_mode, EnterAlternateScreen, disable_raw_mode, LeaveAlternateScreen}, execute};
 
-extern crate termion;
-use termion::event::Key;
-use termion::input::TermRead;
-
-pub struct Qb<'a> {
-    conn: &'a Connection,
-    tabs: TabsState,
-    dbs: Vec<Option<DbTable>>,
-}
-
-impl Qb <'_> {
-    pub fn new(conn: &Connection) -> Qb {
-        Qb {
-            conn,
-            tabs: TabsState::new(Vec::new()),
-            dbs: Vec::new(),
-        }
-    }
-    pub fn open(&mut self, db: String, index: usize) -> Result<()> {
-        let ent = get_entries(self.conn, db.clone());
-        let (scheme, ents) = ent?;
-        self.dbs[index] = Some(DbTable::new(db, scheme, ents));
-        Ok(())
-    }
-    pub fn open_current(&mut self) -> Result<()> {
-        if let None = self.dbs[self.tabs.index] {
-            return self.open(self.tabs.get_tab(), self.tabs.index)
-        }
-        Ok(())
-    }
-
-    pub fn selected(&self) -> &DbTable {
-        self.dbs[self.tabs.index].as_ref().unwrap()
-    }
-
-    pub fn mutselected(&mut self) -> &mut DbTable {
-        self.dbs[self.tabs.index].as_mut().unwrap()
-    }
-
-    fn get_names(&mut self) -> Result<()> {
-        let mut stmt = self.conn.prepare("SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")?;
-        let rows = stmt.query_map([], |row| row.get(0))?;
-
-        let mut tbls = Vec::new();
-        for tbl in rows {
-            let t: String = tbl?;
-            tbls.push(t.clone());
-            // self.dbs.insert(t, None);
-        }
-        let size = tbls.len();
-        self.tabs = TabsState::new(tbls);
-        self.dbs = vec![None; size];
-        Ok(())
-    }   
-}
-
-fn get_entries(conn: &Connection, name: String) -> Result<(Vec<String>,Vec<Vec<Value>>)> {
-    let sql = format!("SELECT * FROM {}", name);
-    let mut stmt = conn.prepare(&sql)?;
-    let value = stmt.column_names();
-    let scheme: Vec<String> = value.iter().map(|s| s.to_string()).collect();
-    let ncols = stmt.column_count();
-    let rows = stmt.query_map([], |row| {
-        let mut cols = Vec::new();
-        for i in 0..ncols {
-            cols.push(row.get(i)?)
-        }
-        Ok(cols)
-    })?;
-
-    let mut entries = Vec::new();
-    for entry in rows {
-        entries.push(entry?);
-    }
-
-    Ok((scheme, entries))
-}
-
-#[derive(Clone)]
-pub struct DbTable {
-    name: String,
-    scheme: Vec<String>,
-    state: TableState,
-    items: Vec<Vec<Value>>,
-    hstate: usize,
-    hlen: usize,
-    hwidth: usize,
-    zoom: Option<Vec<Value>>, // should be a ref
-}
-
-
-impl DbTable {
-    fn new(name: String, scheme: Vec<String>, db: Vec<Vec<Value>>) -> Self {
-        let hlen = if db.is_empty() {
-            0
-        } else {
-            db[0].len()
-        };
-        DbTable {
-            name,
-            scheme,
-            state: TableState::default(),
-            items: db,
-            hstate: 0,
-            hlen,
-            hwidth: 5,
-            zoom: None,
-        }
-    }
-    pub fn next(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
-    }
-    pub fn prev(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    // lets wrap around
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(i));
-    }
-    pub fn set(&mut self, i: usize) {
-        self.state.select(Some(i));
-    }
-
-    pub fn first(&mut self) {
-        self.set(0);
-    }
-
-    pub fn grep(&mut self, ) {
-    }
-    
-    pub fn last(&mut self) {
-        self.set(self.items.len() - 1);
-    }
-
-    // maybe these 2 should wrap
-    pub fn hnext(&mut self) {
-        if self.hlen > self.hwidth && self.hstate < self.hlen - self.hwidth {
-            self.hstate += 1; 
-        }
-    }
-
-    pub fn hprev(&mut self) {
-        if self.hstate > 0 {
-            self.hstate -= 1; 
-        }
-    }
-}
-
-pub struct TabsState {
+pub struct Qb {
+    conn: Connection,
     pub titles: Vec<String>,
+    tables: Vec<Option<DbTable>>,
     pub index: usize,
+    mode: Mode,
+    input: Option<Input>,
 }
 
-impl TabsState {
-    pub fn new(titles: Vec<String>) -> TabsState {
-        TabsState {
-            titles, 
+impl Qb {
+    pub fn new(conn: Connection) -> Result<Qb> {
+        let tbls = {
+            let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+
+            let mut tbls = Vec::new();
+            for tbl in rows {
+                let t: String = tbl?;
+                tbls.push(t.clone());
+            }
+            tbls
+        };
+        let tables = vec![None; tbls.len()];
+
+        Ok(Qb {
+            conn,
+            titles: tbls,
+            tables,
             index: 0,
-        }
+            mode: Mode::Main,
+            input: None,
+        })
     }
 
-    pub fn get_tab(&self) -> String {
-        self.titles[self.index].clone()
+    pub fn populate_table(&mut self, index: usize) -> Result<()> {
+        let (scheme, ents) = self.get_entries(index)?;
+        self.tables[index] = Some(DbTable::new(scheme, ents));
+        Ok(())
     }
+
+    pub fn selected(&mut self) -> Result<&DbTable> {
+        if let None = self.tables[self.index] {
+            self.populate_table(self.index)?;
+        }
+        // this unwrap is safe
+        Ok(self.tables[self.index].as_ref().unwrap())
+    }
+
+    pub fn mutselected(&mut self) -> Result<&mut DbTable> {
+        if let None = self.tables[self.index] {
+            self.populate_table(self.index)?;
+        }
+        Ok(self.tables[self.index].as_mut().unwrap())
+    }
+
+    pub fn select_table(&mut self) -> Result<()> {
+        if let None = self.tables[self.index] {
+            return self.populate_table(self.index)
+        }
+        Ok(())
+    }
+
     pub fn next(&mut self) {
         self.index = (self.index + 1) % self.titles.len();
     }
@@ -227,6 +113,32 @@ impl TabsState {
         }
         i
     }
+    pub fn reload(&mut self) -> Result<()> {
+        self.populate_table(self.index)
+    }
+
+    fn get_entries(&self, index: usize) -> Result<(Vec<String>,Vec<Vec<Value>>)> {
+        let table = &self.titles[index];
+        let sql = format!("SELECT * FROM {}", table);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let value = stmt.column_names();
+        let scheme: Vec<String> = value.iter().map(|s| s.to_string()).collect();
+        let ncols = stmt.column_count();
+        let rows = stmt.query_map([], |row| {
+            let mut cols = Vec::new();
+            for i in 0..ncols {
+                cols.push(row.get(i)?)
+            }
+            Ok(cols)
+        })?;
+
+        let mut entries = Vec::new();
+        for entry in rows {
+            entries.push(entry?);
+        }
+
+        Ok((scheme, entries))
+    }
 }
 
 #[derive(Parser)]
@@ -235,26 +147,24 @@ struct Cli {
     db_path: PathBuf,
 }
 
-fn main() -> Result<()> {
-    let args = Cli::parse();
-    let cfg: Config = confy::load("qb", None)
-        .expect("Couldn't load config file, remove it to get a new one");
-    confy::store("qb", None, &cfg).expect("Couldn't update config");
+pub fn startup() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+    let stdout = io::stdout();
+    enable_raw_mode()?;
+    execute!(std::io::stderr(), EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    Terminal::new(backend).context("Backend failed")
+}
 
-    let path = &args.db_path;
-    let conn = Connection::open(path)?;
-    let mut qb = Qb::new(&conn);
-    qb.get_names()?;
- 
-    // Should seperate the draw functions
-    let stdout = io::stdout().into_raw_mode().expect("Can't do raw mode");
-    let stdout = AlternateScreen::from(stdout);
-    let backend = TermionBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).expect("Backend failed");
-    terminal.clear().expect("Clear error");
-   
+fn shutdown(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn run_app<B: Backend>(mut qb: Qb, cfg: Config, terminal: &mut Terminal<B>) -> Result<()> {
     'lp: loop {
-        qb.open_current()?;
+        let mode = qb.mode;
         terminal.draw(|f| {
             let rect = Layout::default()
                 .direction(Direction::Vertical)
@@ -262,53 +172,153 @@ fn main() -> Result<()> {
                 .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
                 .split(f.size());
             ui::make_tabs(&qb, f, rect[0]);
-            ui::make_rows(&mut qb, f, rect[1]);
-            // ui::make_popup(&qb, f)
-        }).expect("render error");
-        let stdin = io::stdin();
-        if let Some(c) = stdin.keys().next() {
-            let ch = c.unwrap();
-            if ch == Key::Char('q') {
-                break 'lp;
+            let table = qb.mutselected().expect("Couldn't select table");
+            table.render(f, rect[1]);
+            match mode {
+                Mode::Main => {}
+                Mode::Zoom => {
+                    table.zoom.render(&table, f)
+                }
+                Mode::Input => {
+                    if let Some(ref input) = qb.input {
+                        input.render(f)
+                    }
+                }
             }
-            for bind in &cfg.keybinds {
-                if bind.key == ch {
-                    match bind.action {
-                        Action::Next => {
-                            qb.mutselected().next();
+        }).context("render error")?;
+        if event::poll(Duration::from_millis(250))? {
+            if let Event::Key(key) = event::read()? {
+                match qb.mode {
+                    Mode::Main => {
+                        if let Some(action) = cfg.main.get(&key) {
+                            match action {
+                                MainAction::Next => {
+                                    qb.mutselected()?.next();
+                                }
+                                MainAction::Prev => {
+                                    qb.mutselected()?.prev();
+                                }
+                                MainAction::Hnext => {
+                                    qb.mutselected()?.hnext();
+                                }
+                                MainAction::Hprev => {
+                                    qb.mutselected()?.hprev();
+                                }
+                                MainAction::First => {
+                                    qb.mutselected()?.first();
+                                }
+                                MainAction::Last => {
+                                    qb.mutselected()?.last();
+                                }
+                                MainAction::Tnext => {
+                                    qb.next();
+                                }
+                                MainAction::Tprev => {
+                                    qb.prev();
+                                }
+                                MainAction::Reload => {
+                                    qb.reload()?;
+                                }
+                                MainAction::Zoom => {
+                                    qb.mode = Mode::Zoom;
+                                }
+                                MainAction::InputQuery => {
+                                    let query = format!("select * from {}",  qb.titles[qb.index]);
+                                    qb.input = Some(Input::new(3, 80, InputType::Query
+                                            , query));
+                                    qb.mode = Mode::Input;
+                                }
+                                MainAction::InputExec => {
+                                    qb.input = Some(Input::new(3, 80, InputType::Exec, "".to_owned()));
+                                    qb.mode = Mode::Input;
+                                }
+                                MainAction::Quit => {
+                                    break 'lp;
+                                }
+                                MainAction::Search => {
+                                }
+                            }
                         }
-                        Action::Prev => {
-                            qb.mutselected().prev();
+                    }
+                    Mode::Zoom => {
+                        if let Some(action) = cfg.zoom.get(&key) {
+                            match action {
+                                ZoomAction::Back => {
+                                    qb.mode = Mode::Main;
+                                }
+                                ZoomAction::ZoomIn => {
+                                    let table = qb.mutselected()?;
+                                    table.zoom.zoom_in();
+                                }
+                                ZoomAction::ZoomOut => {
+                                    let table = qb.mutselected()?;
+                                    table.zoom.zoom_out(table.hlen);
+                                }
+                                ZoomAction::Next => {
+                                    let table = qb.mutselected()?;
+                                    table.zoom.next(table.hlen);
+                                }
+                                ZoomAction::Prev => {
+                                    let table = qb.mutselected()?;
+                                    table.zoom.prev();
+                                }
+                            }
                         }
-                        Action::Hnext => {
-                            qb.mutselected().hnext();
-                        }
-                        Action::Hprev => {
-                            qb.mutselected().hprev();
-                        }
-                        Action::First => {
-                            qb.mutselected().first();
-                        }
-                        Action::Last => {
-                            qb.mutselected().last();
-                        }
-                        Action::Tnext => {
-                            qb.tabs.next();
-                        }
-                        Action::Tprev => {
-                            qb.tabs.prev();
-                        }
-                        Action::Zoom => {
-                        }
-                        Action::Quit => {
-                            break 'lp;
-                        }
-                        Action::Search => {
+                    }
+                    Mode::Input => {
+                        if let Some(ref mut input) = qb.input { 
+                            if let Some(action) = cfg.input.get(&key) {
+                                match action {
+                                    InputAction::Leave => {
+                                        qb.mode = Mode::Main;
+                                    }
+                                    InputAction::Enter => {
+                                        // let input = &mut qb.input.expect("No input found");
+                                        match input.kind {
+                                            InputType::Exec => todo!(),
+                                            InputType::Query => {
+                                                // run a new query
+                                            }
+                                        }
+                                        qb.mode = Mode::Main;
+                                    }
+                                    action => {
+                                        let req = action.try_into()?;
+                                        input.handle(req);
+                                    }
+                                }
+                            } else {
+                                if let KeyCode::Char(char) = key.code {
+                                    input.handle(tui_input::InputRequest::InsertChar(char));
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let args = Cli::parse();
+    let cfg: Config = confy::load("qb", None)
+        .context("Couldn't load config file, remove it to get a new one")?;
+    confy::store("qb", None, &cfg).context("Couldn't update config")?;
+
+    let path = &args.db_path;
+    let conn = Connection::open(path).context("Failed to connect to db")?;
+    let qb = Qb::new(conn)?;
+ 
+    let mut terminal = startup()?;
+
+    terminal.clear().context("Clear error")?;
+
+    let res = run_app(qb, cfg, &mut terminal);
+   
+    // move draw.
+    shutdown(&mut terminal)?;
+    res?;
     Ok(())
 }

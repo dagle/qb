@@ -1,0 +1,7 @@
+- [x] A zoom function to display a single row, a bit rough atm.
+  -- Might be nice to be able to add or sub number of rows.
+- [x] A way to reload.
+- [?] A way to run a Query and display it
+- [?] A way to run Execute a sql statement
+- Speed issues, caching etc.
+- Write different drivers

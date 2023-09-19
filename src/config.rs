@@ -1,7 +1,11 @@
-use crate::Qb;
-use tui::style::{Color};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor, ser::SerializeTuple};
-use termion::event::Key;
+use std::{collections::HashMap, fmt::Display, convert::{TryFrom, TryInto}, error::Error};
+
+use anyhow::anyhow;
+use ratatui::style::Color;
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeTuple};
+use crossterm::event::{KeyCode, ModifierKeyCode, KeyEvent, KeyEventState, KeyEventKind, KeyModifiers};
+use tui_input::InputRequest;
+use thiserror::Error;
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Color")]
@@ -65,7 +69,7 @@ impl Default for Colors {
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum Action {
+pub enum MainAction {
     Next,
     Prev,
     Hnext,
@@ -75,73 +79,156 @@ pub enum Action {
     First,
     Last,
     Zoom,
+    InputQuery,
+    InputExec,
     Quit,
     Search,
+    Reload,
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(remote = "Key")]
-enum KeyDef {
-    Backspace,
-    Left,
-    Right,
-    Up,
-    Down,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    BackTab,
-    Delete,
-    Insert,
-    F(u8),
-    Char(char),
-    Alt(char),
-    Ctrl(char),
-    Null,
-    Esc,
-
-    #[doc(hidden)]
-    __IsNotComplete,
+pub enum ZoomAction {
+    Back,
+    ZoomIn,
+    ZoomOut,
+    Next,
+    Prev,
 }
 
-
 #[derive(Serialize, Deserialize)]
+pub enum InputAction {
+    GoToPrevChar,
+    GoToNextChar,
+    GoToPrevWord,
+    GoToNextWord,
+    GoToStart,
+    GoToEnd,
+    DeletePrevChar,
+    DeleteNextChar,
+    DeletePrevWord,
+    DeleteNextWord,
+    DeleteLine,
+    DeleteTillEnd,
+    Enter,
+    Leave,
+}
+
+#[derive(Error, Debug)]
+pub enum ConvertError {
+    #[error("Convertion error: report upstream")]
+    ConvertError,
+}
+
+impl TryInto<InputRequest> for &InputAction {
+    type Error = ConvertError;
+
+    fn try_into(self) -> Result<InputRequest, Self::Error> {
+        match self {
+            InputAction::GoToPrevChar => Ok(InputRequest::GoToPrevChar),
+            InputAction::GoToNextChar => Ok(InputRequest::GoToNextChar),
+            InputAction::GoToPrevWord => Ok(InputRequest::GoToPrevWord),
+            InputAction::GoToNextWord => Ok(InputRequest::GoToNextWord),
+            InputAction::GoToStart => Ok(InputRequest::GoToStart),
+            InputAction::GoToEnd => Ok(InputRequest::GoToEnd),
+            InputAction::DeletePrevChar => Ok(InputRequest::DeletePrevChar),
+            InputAction::DeleteNextChar => Ok(InputRequest::DeleteNextChar),
+            InputAction::DeletePrevWord => Ok(InputRequest::DeletePrevWord),
+            InputAction::DeleteNextWord => Ok(InputRequest::DeleteNextWord),
+            InputAction::DeleteLine => Ok(InputRequest::DeleteLine),
+            InputAction::DeleteTillEnd => Ok(InputRequest::DeleteTillEnd),
+            InputAction::Enter => Err(ConvertError::ConvertError),
+            InputAction::Leave => Err(ConvertError::ConvertError),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Hash, Eq, PartialEq, Clone, Copy)]
+pub enum Mode {
+    Main,
+    Zoom,
+    Input,
+}
+
+impl Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mode::Main => write!(f, "Main"),
+            Mode::Zoom => write!(f, "Zoom"),
+            Mode::Input => write!(f, "Input"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct KeyBind {
-    #[serde(with = "KeyDef")]
-    pub key: Key,
-    pub action: Action
+    pub key: KeyCode,
+    pub modifier: Option<ModifierKeyCode>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub colors: Colors,
-    pub keybinds: Vec<KeyBind>
+    // pub keybinds: HashMap<KeyEvent, Action>,
+    // pub keymodes: HashMap<Mode, Keymode>,
+    pub main: HashMap<KeyEvent, MainAction>,
+    pub zoom: HashMap<KeyEvent, ZoomAction>,
+    pub input: HashMap<KeyEvent, InputAction>
 }
 
+macro_rules! keypress {
+    ($keycode:expr,$modifier:expr) => {
+        KeyEvent { code: $keycode, modifiers: $modifier, kind: KeyEventKind::Press,  state: KeyEventState::NONE }
+    };
+}
 
 impl Default for Config {
     fn default() -> Self { 
+        let mut main = HashMap::new();
+        main.insert(keypress!(KeyCode::Up, KeyModifiers::NONE), MainAction::Prev);
+        main.insert(keypress!(KeyCode::Char('k'), KeyModifiers::NONE), MainAction::Prev);
+        main.insert(keypress!(KeyCode::Down, KeyModifiers::NONE), MainAction::Next);
+        main.insert(keypress!(KeyCode::Char('j'), KeyModifiers::NONE), MainAction::Next);
+        main.insert(keypress!(KeyCode::Left, KeyModifiers::NONE), MainAction::Hprev);
+        main.insert(keypress!(KeyCode::Char('h'), KeyModifiers::NONE), MainAction::Hprev);
+        main.insert(keypress!(KeyCode::Right, KeyModifiers::NONE), MainAction::Hnext);
+        main.insert(keypress!(KeyCode::Char('l'), KeyModifiers::NONE), MainAction::Hnext);
+        main.insert(keypress!(KeyCode::Home, KeyModifiers::NONE), MainAction::First);
+        main.insert(keypress!(KeyCode::Char('g'), KeyModifiers::NONE), MainAction::First);
+        main.insert(keypress!(KeyCode::End, KeyModifiers::NONE), MainAction::Last);
+        main.insert(keypress!(KeyCode::Char('G'), KeyModifiers::NONE), MainAction::Last);
+        main.insert(keypress!(KeyCode::Char('n'), KeyModifiers::CONTROL), MainAction::Tnext);
+        main.insert(keypress!(KeyCode::Char('p'), KeyModifiers::CONTROL), MainAction::Tprev);
+        main.insert(keypress!(KeyCode::Char('q'), KeyModifiers::NONE), MainAction::Quit);
+        main.insert(keypress!(KeyCode::Char('r'), KeyModifiers::NONE), MainAction::Reload);
+        main.insert(keypress!(KeyCode::Char('z'), KeyModifiers::NONE), MainAction::Zoom);
+        main.insert(keypress!(KeyCode::Char('i'), KeyModifiers::NONE), MainAction::InputQuery);
+
+        let mut zoom = HashMap::new();
+        zoom.insert(keypress!(KeyCode::Esc, KeyModifiers::NONE), ZoomAction::Back);
+        zoom.insert(keypress!(KeyCode::Char('q'), KeyModifiers::NONE), ZoomAction::Back);
+        zoom.insert(keypress!(KeyCode::Char('+'), KeyModifiers::NONE), ZoomAction::ZoomIn);
+        zoom.insert(keypress!(KeyCode::Char('-'), KeyModifiers::NONE), ZoomAction::ZoomOut);
+        zoom.insert(keypress!(KeyCode::Left, KeyModifiers::NONE), ZoomAction::Prev);
+        zoom.insert(keypress!(KeyCode::Char('h'), KeyModifiers::NONE), ZoomAction::Prev);
+        zoom.insert(keypress!(KeyCode::Right, KeyModifiers::NONE), ZoomAction::Next);
+        zoom.insert(keypress!(KeyCode::Char('l'), KeyModifiers::NONE), ZoomAction::Prev);
+
+        let mut input = HashMap::new();
+        input.insert(keypress!(KeyCode::Esc, KeyModifiers::NONE), InputAction::Leave);
+        input.insert(keypress!(KeyCode::Backspace, KeyModifiers::NONE), InputAction::DeletePrevChar);
+        input.insert(keypress!(KeyCode::Delete, KeyModifiers::NONE), InputAction::DeleteNextChar);
+        input.insert(keypress!(KeyCode::Left, KeyModifiers::NONE), InputAction::GoToPrevChar);
+        input.insert(keypress!(KeyCode::Right, KeyModifiers::NONE), InputAction::GoToNextChar);
+        input.insert(keypress!(KeyCode::Char('a'), KeyModifiers::CONTROL), InputAction::GoToStart);
+        input.insert(keypress!(KeyCode::Char('e'), KeyModifiers::CONTROL), InputAction::GoToEnd);
+        input.insert(keypress!(KeyCode::Char('w'), KeyModifiers::CONTROL), InputAction::DeletePrevWord);
+        
         Self { 
-            keybinds: vec![
-                KeyBind {key:Key::Up, action: Action::Prev},
-                KeyBind {key:Key::Char('k'), action: Action::Prev},
-                KeyBind {key:Key::Down, action: Action::Next},
-                KeyBind {key:Key::Char('j'), action: Action::Next},
-                KeyBind {key:Key::Left, action: Action::Hprev},
-                KeyBind {key:Key::Char('h'), action: Action::Hprev},
-                KeyBind {key:Key::Right, action: Action::Hnext},
-                KeyBind {key:Key::Char('l'), action: Action::Hnext},
-                KeyBind {key:Key::Home, action: Action::First},
-                KeyBind {key:Key::Char('g'), action: Action::First},
-                KeyBind {key:Key::End, action: Action::Last},
-                KeyBind {key:Key::Ctrl('n'), action: Action::Tnext},
-                KeyBind {key:Key::Ctrl('p'), action: Action::Tprev},
-                KeyBind {key:Key::Char('G'), action: Action::Last},
-                KeyBind {key:Key::Char('q'), action: Action::Quit},
-            ],
             colors: Colors::default(),
+            main,
+            zoom,
+            input
         }
     }
 }
@@ -152,6 +239,6 @@ mod tests {
 
     #[test]
     fn test_serialize() {
-        let conf = Config::default();
+        let _ = Config::default();
     }
 }
