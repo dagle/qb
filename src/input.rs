@@ -1,22 +1,9 @@
-// use tui_input::Input;
-
 use std::{fmt::Display, convert::TryFrom};
 
 use ratatui::{prelude::{Rect, Backend}, Frame, widgets::Paragraph};
 use tui_input::InputRequest;
 
-use thiserror::Error;
-
-// TDOO: This won't be a problem after refactor
-#[derive(Error, Debug)]
-pub enum ConvertError {
-    #[error("Convertion error: report upstream")]
-    ConvertError,
-
-    #[error("Not a valid command: {0}")]
-    InputTypeError(String),
-}
-
+use crate::error::ConvertError;
 
 pub enum InputType {
     Exec,

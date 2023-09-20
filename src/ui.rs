@@ -96,20 +96,6 @@ pub fn input_err<B: Backend>(error: &str, f: &mut Frame<B>, area: Rect) {
     f.set_cursor(x, y+1);
 }
 
-pub enum InputType {
-    Exec,
-    Query,
-}
-
-impl Display for InputType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InputType::Exec => write!(f, "Exec"),
-            InputType::Query => write!(f, "Query"),
-        }
-    }
-}
-
 // pub fn InputBox<B: Backend>(qb: &mut Qb, f: &mut Frame<B>, input: InputType) -> Result<()>{
 //     let block = Block::default().title(input.show()).borders(Borders::ALL);
 //     let area = centered_rect(100, 20, f.size());

@@ -1,3 +1,4 @@
+use qb::{rows::DbTable, input::{Input, InputType}};
 use rusqlite::Connection;
 use rusqlite::types::Value;
 use clap::Parser;
@@ -7,11 +8,7 @@ use anyhow::{Context, Result, bail};
 use std::io;
 
 mod ui;
-mod uis;
 mod config;
-
-use uis::{rows::DbTable, input::InputType};
-use uis::input::Input;
 
 use config::*;
 
