@@ -8,7 +8,7 @@ use ratatui::{
     backend::Backend,
     style::{Color, Modifier, Style},
     text::{Span, Line},
-    widgets::{Borders, Block, Tabs},
+    widgets::{Borders, Block, Tabs, Paragraph},
     Frame
 };
 use crate::Qb;
@@ -86,6 +86,14 @@ pub fn make_tabs<B: Backend>(qb: &Qb, f: &mut Frame<B>, rect: Rect) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         ;
     f.render_widget(ttabs, rect);
+}
+
+pub fn input_err<B: Backend>(error: &str, f: &mut Frame<B>, area: Rect) {
+    let input = Paragraph::new(error).style(Style::default().fg(Color::Red));
+    f.render_widget(input, area);
+    let x = area.x;
+    let y = area.y;
+    f.set_cursor(x, y+1);
 }
 
 pub enum InputType {

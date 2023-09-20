@@ -1,11 +1,11 @@
 use std::{collections::HashMap, fmt::Display, convert::{TryFrom, TryInto}, error::Error};
 
 use anyhow::anyhow;
+use qb::error::ConvertError;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeTuple};
 use crossterm::event::{KeyCode, ModifierKeyCode, KeyEvent, KeyEventState, KeyEventKind, KeyModifiers};
 use tui_input::InputRequest;
-use thiserror::Error;
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Color")]
@@ -79,11 +79,12 @@ pub enum MainAction {
     First,
     Last,
     Zoom,
-    InputQuery,
-    InputExec,
+    InputCurrent(String),
+    Input(String),
     Quit,
     Search,
     Reload,
+    // ClearError,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -111,12 +112,6 @@ pub enum InputAction {
     DeleteTillEnd,
     Enter,
     Leave,
-}
-
-#[derive(Error, Debug)]
-pub enum ConvertError {
-    #[error("Convertion error: report upstream")]
-    ConvertError,
 }
 
 impl TryInto<InputRequest> for &InputAction {
@@ -147,6 +142,7 @@ pub enum Mode {
     Main,
     Zoom,
     Input,
+    Visual,
 }
 
 impl Display for Mode {
@@ -155,6 +151,7 @@ impl Display for Mode {
             Mode::Main => write!(f, "Main"),
             Mode::Zoom => write!(f, "Zoom"),
             Mode::Input => write!(f, "Input"),
+            Mode::Visual => write!(f, "Visual"),
         }
     }
 }
@@ -202,7 +199,8 @@ impl Default for Config {
         main.insert(keypress!(KeyCode::Char('q'), KeyModifiers::NONE), MainAction::Quit);
         main.insert(keypress!(KeyCode::Char('r'), KeyModifiers::NONE), MainAction::Reload);
         main.insert(keypress!(KeyCode::Char('z'), KeyModifiers::NONE), MainAction::Zoom);
-        main.insert(keypress!(KeyCode::Char('i'), KeyModifiers::NONE), MainAction::InputQuery);
+        main.insert(keypress!(KeyCode::Char('i'), KeyModifiers::NONE), MainAction::InputCurrent("query".to_owned()));
+        main.insert(keypress!(KeyCode::Char('e'), KeyModifiers::NONE), MainAction::Input("exec ".to_owned()));
 
         let mut zoom = HashMap::new();
         zoom.insert(keypress!(KeyCode::Esc, KeyModifiers::NONE), ZoomAction::Back);
@@ -216,6 +214,7 @@ impl Default for Config {
 
         let mut input = HashMap::new();
         input.insert(keypress!(KeyCode::Esc, KeyModifiers::NONE), InputAction::Leave);
+        input.insert(keypress!(KeyCode::Enter, KeyModifiers::NONE), InputAction::Enter);
         input.insert(keypress!(KeyCode::Backspace, KeyModifiers::NONE), InputAction::DeletePrevChar);
         input.insert(keypress!(KeyCode::Delete, KeyModifiers::NONE), InputAction::DeleteNextChar);
         input.insert(keypress!(KeyCode::Left, KeyModifiers::NONE), InputAction::GoToPrevChar);

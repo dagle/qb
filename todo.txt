@@ -1,7 +1,21 @@
 - [x] A zoom function to display a single row, a bit rough atm.
   -- Might be nice to be able to add or sub number of rows.
 - [x] A way to reload.
-- [?] A way to run a Query and display it
-- [?] A way to run Execute a sql statement
-- Speed issues, caching etc.
+- [x] A way to run a Query and display it
+- [x] A way to run Execute a sql statement
+
+- [?] Error handling
+
+- Speed issues, caching and lazy filling.
 - Write different drivers
+
+Rework:
+- Create a buffer object.
+- A Zoom is just a buffer object with a floating window.
+-- That allows us to select multiple things in a zoom(buffer).
+
+- Would allow us to do splits
+- Being able to connect to multiple databases.
+
+- [ ] A way to copy the content from a field
+-- Create a visual mode?

@@ -1,9 +1,22 @@
 // use tui_input::Input;
 
-use std::fmt::Display;
+use std::{fmt::Display, convert::TryFrom};
 
-use ratatui::{prelude::{Layout, Rect, Direction, Constraint, Backend}, Frame, widgets::{Paragraph, Block, Borders}};
+use ratatui::{prelude::{Rect, Backend}, Frame, widgets::Paragraph};
 use tui_input::InputRequest;
+
+use thiserror::Error;
+
+// TDOO: This won't be a problem after refactor
+#[derive(Error, Debug)]
+pub enum ConvertError {
+    #[error("Convertion error: report upstream")]
+    ConvertError,
+
+    #[error("Not a valid command: {0}")]
+    InputTypeError(String),
+}
+
 
 pub enum InputType {
     Exec,
@@ -13,68 +26,46 @@ pub enum InputType {
 impl Display for InputType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InputType::Exec => write!(f, "Exec"),
-            InputType::Query => write!(f, "Query"),
+            InputType::Exec => write!(f, "exec"),
+            InputType::Query => write!(f, "query"),
+        }
+    }
+}
+
+impl TryFrom<&str> for InputType {
+    type Error = ConvertError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "exec" => Ok(InputType::Exec),
+            "query" => Ok(InputType::Query),
+            _ => Err(ConvertError::InputTypeError(value.to_owned())),
         }
     }
 }
 
 pub struct Input {
-    lines: u16,
-    width_procent: u16,
-    input: tui_input::Input,
+    pub input: tui_input::Input,
     pub kind: InputType,
 }
 
 impl Input { 
-    pub fn new(height: u16, width: u16, kind: InputType, value: String) -> Self {
+    pub fn new(kind: InputType, value: String) -> Self {
         Input {
-            lines:  height,
-            width_procent: width,
             input: tui_input::Input::new(value),
             kind,
         }
-    }
-    pub fn set_input(&mut self, value: String) {
-        self.input = tui_input::Input::new(value);
     }
 
     pub fn handle(&mut self, event: InputRequest) {
         self.input.handle(event);
     }
 
-    pub fn render<B: Backend>(&self, f: &mut Frame<B>) { 
-        let block = Block::default().title(self.kind.to_string()).borders(Borders::ALL);
-        let area = centered_rect(self.width_procent, self.lines, f.size());
-
-        let input = Paragraph::new(self.input.value())
-            .block(block);
+    pub fn render<B: Backend>(&self, f: &mut Frame<B>, area: Rect) { 
+        let input = Paragraph::new(self.input.value());
         f.render_widget(input, area);
+        let x = area.x + self.input.visual_cursor() as u16;
+        let y = area.y;
+        f.set_cursor(x, y+1);
     }
-}
-
-fn centered_rect(percent_x: u16, lines: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage(50),
-                Constraint::Length(lines),
-                Constraint::Percentage(50),
-            ]
-            .as_ref(),
-        )
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(popup_layout[1])[1]
 }

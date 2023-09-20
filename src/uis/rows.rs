@@ -6,6 +6,7 @@ use super::zoom::Zoom;
 
 #[derive(Clone)]
 pub struct DbTable {
+    pub search: String,
     pub scheme: Vec<String>,
     pub state: TableState,
     pub entries: Vec<Vec<Value>>,
@@ -26,7 +27,7 @@ fn show(v: &Value) -> String {
 }
 
 impl DbTable {
-    pub fn new(scheme: Vec<String>, entries: Vec<Vec<Value>>) -> Self {
+    pub fn new(search: String, scheme: Vec<String>, entries: Vec<Vec<Value>>) -> Self {
         let hlen = if entries.is_empty() {
             0
         } else {
@@ -34,6 +35,7 @@ impl DbTable {
         };
         let len = scheme.len();
         DbTable {
+            search,
             scheme,
             state: TableState::default(),
             entries,

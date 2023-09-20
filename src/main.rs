@@ -2,10 +2,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 use clap::Parser;
 use std::{path::PathBuf, time::Duration, io::Stdout, convert::TryInto};
-use anyhow::{Context, Result};
-
-use tui_input::backend::crossterm::EventHandler;
-// use tui_input::Input;
+use anyhow::{Context, Result, bail};
 
 use std::io;
 
@@ -32,7 +29,7 @@ pub struct Qb {
     tables: Vec<Option<DbTable>>,
     pub index: usize,
     mode: Mode,
-    input: Option<Input>,
+    // input: Option<Input>,
 }
 
 impl Qb {
@@ -56,13 +53,27 @@ impl Qb {
             tables,
             index: 0,
             mode: Mode::Main,
-            input: None,
+            // input: None,
         })
     }
 
     pub fn populate_table(&mut self, index: usize) -> Result<()> {
-        let (scheme, ents) = self.get_entries(index)?;
-        self.tables[index] = Some(DbTable::new(scheme, ents));
+        let table = &self.titles[index];
+        let query = format!("SELECT * FROM {}", table);
+        let (scheme, ents) = self.get_entries(&query)?;
+        self.tables[index] = Some(DbTable::new(query, scheme, ents));
+        Ok(())
+    }
+
+    pub fn custom_seach(&mut self, query: &str) -> Result<()> {
+        let (scheme, ents) = self.get_entries(query)?;
+        self.tables.push(Some(DbTable::new(query.to_owned(), scheme, ents)));
+        self.titles.push("custom search".to_owned());
+        Ok(())
+    }
+
+    pub fn exec(&self, sql: &str) -> Result<()> {
+        self.conn.execute(sql, [])?;
         Ok(())
     }
 
@@ -99,6 +110,10 @@ impl Qb {
         }
     }
 
+    pub fn tab_last(&mut self) {
+        self.index = self.titles.len() - 1;
+    }
+
     pub fn set(&mut self, i: usize) {
         self.index = i;
     }
@@ -117,10 +132,8 @@ impl Qb {
         self.populate_table(self.index)
     }
 
-    fn get_entries(&self, index: usize) -> Result<(Vec<String>,Vec<Vec<Value>>)> {
-        let table = &self.titles[index];
-        let sql = format!("SELECT * FROM {}", table);
-        let mut stmt = self.conn.prepare(&sql)?;
+    fn get_entries(&self, query: &str) -> Result<(Vec<String>,Vec<Vec<Value>>)> {
+        let mut stmt = self.conn.prepare(query)?;
         let value = stmt.column_names();
         let scheme: Vec<String> = value.iter().map(|s| s.to_string()).collect();
         let ncols = stmt.column_count();
@@ -162,139 +175,199 @@ fn shutdown(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     Ok(())
 }
 
+fn parse_command(input: &str) -> Result<(InputType, String)> {
+    let mut parts = input.split_whitespace();
+
+    let kind = parts.next();
+    let Some(kind) = kind else {
+        bail!("Missing kind");
+    };
+    let kind = kind.try_into()?;
+
+    let args = parts.fold(String::new(), |a, b| a + b + "\n");
+
+    Ok((kind, args))
+}
+
+
+/// Handle an event
+/// Returning a true means that we want to break the loop
+fn event<B: Backend>(qb: &mut Qb, cfg: &Config, input: &mut Option<Input>, last_err: &mut Option<anyhow::Error>, terminal: &mut Terminal<B>) -> Result<bool> {
+    if event::poll(Duration::from_millis(250))? {
+        if let Event::Key(key) = event::read()? {
+            match qb.mode {
+                Mode::Main => {
+                    if let Some(action) = cfg.main.get(&key) {
+                        match action {
+                            MainAction::Next => {
+                                qb.mutselected()?.next();
+                            }
+                            MainAction::Prev => {
+                                qb.mutselected()?.prev();
+                            }
+                            MainAction::Hnext => {
+                                qb.mutselected()?.hnext();
+                            }
+                            MainAction::Hprev => {
+                                qb.mutselected()?.hprev();
+                            }
+                            MainAction::First => {
+                                qb.mutselected()?.first();
+                            }
+                            MainAction::Last => {
+                                qb.mutselected()?.last();
+                            }
+                            MainAction::Tnext => {
+                                qb.next();
+                            }
+                            MainAction::Tprev => {
+                                qb.prev();
+                            }
+                            MainAction::Reload => {
+                                qb.reload()?;
+                            }
+                            MainAction::Zoom => {
+                                qb.mode = Mode::Zoom;
+                            }
+                            MainAction::InputCurrent(pree) => {
+                                let table = qb.selected()?;
+                                let inputstr = format!("{} {}", pree, table.search);
+                                *input = Some(Input::new(InputType::Query
+                                        , inputstr));
+                                terminal.show_cursor()?;
+                                qb.mode = Mode::Input;
+                                *last_err = None;
+                            }
+                            MainAction::Input(pree) => {
+                                *input = Some(Input::new(InputType::Exec, pree.clone()));
+                                terminal.show_cursor()?;
+                                qb.mode = Mode::Input;
+                                *last_err = None;
+                            }
+                            MainAction::Quit => {
+                                return Ok(true);
+                            }
+                            MainAction::Search => {
+                            }
+                        }
+                    }
+                }
+                Mode::Visual => {
+                }
+                Mode::Zoom => {
+                    if let Some(action) = cfg.zoom.get(&key) {
+                        match action {
+                            ZoomAction::Back => {
+                                qb.mode = Mode::Main;
+                            }
+                            ZoomAction::ZoomIn => {
+                                let table = qb.mutselected()?;
+                                table.zoom.zoom_in();
+                            }
+                            ZoomAction::ZoomOut => {
+                                let table = qb.mutselected()?;
+                                table.zoom.zoom_out(table.hlen);
+                            }
+                            ZoomAction::Next => {
+                                let table = qb.mutselected()?;
+                                table.zoom.next(table.hlen);
+                            }
+                            ZoomAction::Prev => {
+                                let table = qb.mutselected()?;
+                                table.zoom.prev();
+                            }
+                        }
+                    }
+                }
+                Mode::Input => {
+                    if let Some(action) = cfg.input.get(&key) {
+                        match action {
+                            InputAction::Leave => {
+                                qb.mode = Mode::Main;
+                            }
+                            InputAction::Enter => {
+                                if let Some(ref inner) = input { 
+                                    let res = parse_command(inner.input.value());
+                                    *input = None;
+                                    qb.mode = Mode::Main;
+                                    terminal.hide_cursor()?;
+                                    let (kind, args) = res?;
+
+                                    match kind {
+                                        InputType::Exec => {
+                                            let res = qb.exec(&args)?;
+                                        }
+                                        InputType::Query => {
+                                            let res = qb.custom_seach(&args);
+                                            if res.is_ok() {
+                                                qb.tab_last()
+                                            }
+                                            res?;
+                                        }
+                                    }
+                                }
+                            }
+                            action => {
+                                if let Some(ref mut input) = input { 
+                                    let req = action.try_into()?;
+                                    input.handle(req);
+                                }
+                            }
+                        }
+                    } else {
+                        if let Some(ref mut input) = input { 
+                            if let KeyCode::Char(char) = key.code {
+                                input.handle(tui_input::InputRequest::InsertChar(char));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn run_app<B: Backend>(mut qb: Qb, cfg: Config, terminal: &mut Terminal<B>) -> Result<()> {
+    let mut input: Option<Input> = None;
+    let mut last_err: Option<anyhow::Error> = None;
     'lp: loop {
         let mode = qb.mode;
         terminal.draw(|f| {
             let rect = Layout::default()
                 .direction(Direction::Vertical)
-                // maybe just a line?
-                .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)].as_ref())
                 .split(f.size());
             ui::make_tabs(&qb, f, rect[0]);
             let table = qb.mutselected().expect("Couldn't select table");
             table.render(f, rect[1]);
             match mode {
-                Mode::Main => {}
+                Mode::Main => {
+                    if let Some(ref err) = last_err {
+                        ui::input_err(&err.to_string(), f, rect[2])
+                    }
+                }
+                Mode::Visual => {
+                    // higligt the selected fields in grey?
+                }
                 Mode::Zoom => {
                     table.zoom.render(&table, f)
                 }
                 Mode::Input => {
-                    if let Some(ref input) = qb.input {
-                        input.render(f)
+                    if let Some(ref input) = input {
+                        input.render(f, rect[2])
                     }
                 }
             }
+            // ui::make_tabs(&qb, f, rect[2])
         }).context("render error")?;
-        if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                match qb.mode {
-                    Mode::Main => {
-                        if let Some(action) = cfg.main.get(&key) {
-                            match action {
-                                MainAction::Next => {
-                                    qb.mutselected()?.next();
-                                }
-                                MainAction::Prev => {
-                                    qb.mutselected()?.prev();
-                                }
-                                MainAction::Hnext => {
-                                    qb.mutselected()?.hnext();
-                                }
-                                MainAction::Hprev => {
-                                    qb.mutselected()?.hprev();
-                                }
-                                MainAction::First => {
-                                    qb.mutselected()?.first();
-                                }
-                                MainAction::Last => {
-                                    qb.mutselected()?.last();
-                                }
-                                MainAction::Tnext => {
-                                    qb.next();
-                                }
-                                MainAction::Tprev => {
-                                    qb.prev();
-                                }
-                                MainAction::Reload => {
-                                    qb.reload()?;
-                                }
-                                MainAction::Zoom => {
-                                    qb.mode = Mode::Zoom;
-                                }
-                                MainAction::InputQuery => {
-                                    let query = format!("select * from {}",  qb.titles[qb.index]);
-                                    qb.input = Some(Input::new(3, 80, InputType::Query
-                                            , query));
-                                    qb.mode = Mode::Input;
-                                }
-                                MainAction::InputExec => {
-                                    qb.input = Some(Input::new(3, 80, InputType::Exec, "".to_owned()));
-                                    qb.mode = Mode::Input;
-                                }
-                                MainAction::Quit => {
-                                    break 'lp;
-                                }
-                                MainAction::Search => {
-                                }
-                            }
-                        }
-                    }
-                    Mode::Zoom => {
-                        if let Some(action) = cfg.zoom.get(&key) {
-                            match action {
-                                ZoomAction::Back => {
-                                    qb.mode = Mode::Main;
-                                }
-                                ZoomAction::ZoomIn => {
-                                    let table = qb.mutselected()?;
-                                    table.zoom.zoom_in();
-                                }
-                                ZoomAction::ZoomOut => {
-                                    let table = qb.mutselected()?;
-                                    table.zoom.zoom_out(table.hlen);
-                                }
-                                ZoomAction::Next => {
-                                    let table = qb.mutselected()?;
-                                    table.zoom.next(table.hlen);
-                                }
-                                ZoomAction::Prev => {
-                                    let table = qb.mutselected()?;
-                                    table.zoom.prev();
-                                }
-                            }
-                        }
-                    }
-                    Mode::Input => {
-                        if let Some(ref mut input) = qb.input { 
-                            if let Some(action) = cfg.input.get(&key) {
-                                match action {
-                                    InputAction::Leave => {
-                                        qb.mode = Mode::Main;
-                                    }
-                                    InputAction::Enter => {
-                                        // let input = &mut qb.input.expect("No input found");
-                                        match input.kind {
-                                            InputType::Exec => todo!(),
-                                            InputType::Query => {
-                                                // run a new query
-                                            }
-                                        }
-                                        qb.mode = Mode::Main;
-                                    }
-                                    action => {
-                                        let req = action.try_into()?;
-                                        input.handle(req);
-                                    }
-                                }
-                            } else {
-                                if let KeyCode::Char(char) = key.code {
-                                    input.handle(tui_input::InputRequest::InsertChar(char));
-                                }
-                            }
-                        }
-                    }
-                }
+        match event(&mut qb, &cfg, &mut input, &mut last_err, terminal) {
+            Ok(false) => {}, //
+            Ok(true) => {
+                break 'lp;
+            }
+            Err(err) => {
+                last_err = Some(err)
             }
         }
     }
