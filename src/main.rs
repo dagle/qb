@@ -75,7 +75,7 @@ impl Qb {
     }
 
     pub fn selected(&mut self) -> Result<&DbTable> {
-        if let None = self.tables[self.index] {
+        if self.tables[self.index].is_none() {
             self.populate_table(self.index)?;
         }
         // this unwrap is safe
@@ -83,18 +83,18 @@ impl Qb {
     }
 
     pub fn mutselected(&mut self) -> Result<&mut DbTable> {
-        if let None = self.tables[self.index] {
+        if self.tables[self.index].is_none() {
             self.populate_table(self.index)?;
         }
         Ok(self.tables[self.index].as_mut().unwrap())
     }
 
-    pub fn select_table(&mut self) -> Result<()> {
-        if let None = self.tables[self.index] {
-            return self.populate_table(self.index)
-        }
-        Ok(())
-    }
+    // pub fn select_table(&mut self) -> Result<()> {
+    //     if self.tables[self.index].is_none() {
+    //         return self.populate_table(self.index)
+    //     }
+    //     Ok(())
+    // }
 
     pub fn next(&mut self) {
         self.index = (self.index + 1) % self.titles.len();
@@ -292,7 +292,7 @@ fn event<B: Backend>(qb: &mut Qb, cfg: &Config, input: &mut Option<Input>, last_
 
                                     match kind {
                                         InputType::Exec => {
-                                            let res = qb.exec(&args)?;
+                                            qb.exec(&args)?;
                                         }
                                         InputType::Query => {
                                             let res = qb.custom_seach(&args);
@@ -311,11 +311,9 @@ fn event<B: Backend>(qb: &mut Qb, cfg: &Config, input: &mut Option<Input>, last_
                                 }
                             }
                         }
-                    } else {
-                        if let Some(ref mut input) = input { 
-                            if let KeyCode::Char(char) = key.code {
-                                input.handle(tui_input::InputRequest::InsertChar(char));
-                            }
+                    } else if let Some(ref mut input) = input { 
+                        if let KeyCode::Char(char) = key.code {
+                            input.handle(tui_input::InputRequest::InsertChar(char));
                         }
                     }
                 }
@@ -348,7 +346,7 @@ fn run_app<B: Backend>(mut qb: Qb, cfg: Config, terminal: &mut Terminal<B>) -> R
                     // higligt the selected fields in grey?
                 }
                 Mode::Zoom => {
-                    table.zoom.render(&table, f)
+                    table.zoom.render(table, f)
                 }
                 Mode::Input => {
                     if let Some(ref input) = input {

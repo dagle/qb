@@ -1,6 +1,5 @@
-use std::{collections::HashMap, fmt::Display, convert::{TryFrom, TryInto}, error::Error};
+use std::{collections::HashMap, fmt::Display, convert::TryInto};
 
-use anyhow::anyhow;
 use qb::error::ConvertError;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeTuple};
